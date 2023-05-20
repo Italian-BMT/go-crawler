@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"log"
 	"net/http"
 	"os"
@@ -15,8 +18,6 @@ import (
 	"github.com/PuerkitoBio/goquery"
 	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 )
 
 type extractedInfo struct {
@@ -25,8 +26,31 @@ type extractedInfo struct {
 	naverCode int
 }
 
+type BucketBasics struct {
+	S3Client *s3.Client
+}
+
 var INFO = map[string][]map[string]interface{}{}
 var wg = new(sync.WaitGroup)
+
+// AWS S3 사용을 위한 credential 설정 & client 생성
+func AWSConfigure() BucketBasics {
+	staticProvider := credentials.NewStaticCredentialsProvider(
+		"AWS_KEY",
+		"AWS_SECRET_KEY",
+		"")
+
+	sdkConfig, err := config.LoadDefaultConfig(
+		context.Background(),
+		config.WithCredentialsProvider(staticProvider),
+	)
+	checkErr(err)
+
+	s3Client := s3.NewFromConfig(sdkConfig)
+	bucketBasics := BucketBasics{s3Client}
+
+	return bucketBasics
+}
 
 func run(num int) {
 	var baseURL string = "https://pts.map.naver.com/end-subway/ends/web/"
@@ -136,8 +160,8 @@ func HandleRequest(ctx context.Context) (string, error) {
 	fmt.Println("총 실행 시간 : ", end)
 
 	// 저장한 json 파일 s3에 업로드
-	sess := session.Must(session.NewSession())
-	uploader := s3manager.NewUploader(sess)
+	bucktBasics := AWSConfigure()
+
 	f, err := os.Open(lambdaFileName)
 	// file close 하는거 예약하기
 	defer f.Close()
@@ -145,9 +169,9 @@ func HandleRequest(ctx context.Context) (string, error) {
 		return "failed to open file", fmt.Errorf("%q, %v", fileName, err)
 	}
 
-	_, err = uploader.Upload(&s3manager.UploadInput{
-		Bucket: aws.String("bucketestmy"),
-		Key:    aws.String("bmt/" + fileName),
+	_, err = bucktBasics.S3Client.PutObject(context.TODO(), &s3.PutObjectInput{
+		Bucket: aws.String("BucketName"),
+		Key:    aws.String(fileName),
 		Body:   f,
 	})
 	if err != nil {
