@@ -4,9 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/PuerkitoBio/goquery"
+	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/joho/godotenv"
 	"log"
 	"net/http"
 	"os"
@@ -14,10 +18,6 @@ import (
 	"strconv"
 	"sync"
 	"time"
-
-	"github.com/PuerkitoBio/goquery"
-	"github.com/aws/aws-lambda-go/lambda"
-	"github.com/aws/aws-sdk-go/aws"
 )
 
 type extractedInfo struct {
@@ -36,13 +36,14 @@ var wg = new(sync.WaitGroup)
 // AWS S3 사용을 위한 credential 설정 & client 생성
 func AWSConfigure() BucketBasics {
 	staticProvider := credentials.NewStaticCredentialsProvider(
-		"AWS_KEY",
-		"AWS_SECRET_KEY",
+		os.Getenv("AWS_BUCKET_ACCESS_KEY"),
+		os.Getenv("AWS_BUCKET_SECRET_KEY"),
 		"")
 
 	sdkConfig, err := config.LoadDefaultConfig(
 		context.Background(),
 		config.WithCredentialsProvider(staticProvider),
+		config.WithRegion(os.Getenv("AWS_REGION")),
 	)
 	checkErr(err)
 
@@ -142,6 +143,10 @@ func checkCode(res *http.Response) {
 func HandleRequest(ctx context.Context) (string, error) {
 	start := time.Now()
 
+	err := godotenv.Load()
+	if err != nil {
+		log.Fatal("Error loading .env file")
+	}
 	// 네이버 서버에 부담을 덜기 위해 batch로 나눠서 크롤링 진행 (batch 마다 5초 휴식)
 	// tcp: broken pipe 에러를 피하기 위해 최대한 작게 배치 사이즈 설정
 	for batchNum := 1; batchNum < 101; batchNum++ {
@@ -170,7 +175,7 @@ func HandleRequest(ctx context.Context) (string, error) {
 	}
 
 	_, err = bucktBasics.S3Client.PutObject(context.TODO(), &s3.PutObjectInput{
-		Bucket: aws.String("BucketName"),
+		Bucket: aws.String(os.Getenv("AWS_BUCKET_NAME")),
 		Key:    aws.String(fileName),
 		Body:   f,
 	})
