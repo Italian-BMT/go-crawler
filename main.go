@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -120,12 +121,6 @@ func scrapeNavercode(code int, baseURL string, c chan<- extractedInfo) {
 		naverCode: code}
 }
 
-// map을 json 형태로 변환 후 파일 쓰기
-func writeFile(fileName string, INFO map[string][]map[string]interface{}) {
-	content, _ := json.MarshalIndent(INFO, "", " ")
-	_ = os.WriteFile(fileName, content, 0644)
-}
-
 // 에러 체킹용 함수 1
 func checkErr(err error) {
 	if err != nil {
@@ -140,7 +135,27 @@ func checkCode(res *http.Response) {
 	}
 }
 
-func HandleRequest(ctx context.Context) (string, error) {
+func S3Uploader(INFO map[string][]map[string]interface{}, basics BucketBasics, fileName string) error {
+	// data가 struct 형태일때는 이상하게 marshal이 되더니, map으로 바꾸니까 한방에 marshal이 잘 됨. 이유가 뭘까?
+	content, err := json.MarshalIndent(INFO, "", " ")
+	if err != nil {
+		log.Fatalln("JSON marshaling failed: %s", err)
+	}
+
+	// json 바이트 스트림을 S3에 업로드
+	_, err = basics.S3Client.PutObject(context.TODO(), &s3.PutObjectInput{
+		Bucket: aws.String(os.Getenv("AWS_BUCKET_NAME")),
+		Key:    aws.String(fileName),
+		Body:   bytes.NewReader(content),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to upload, %v", err)
+	}
+	fmt.Println(fileName + "file successfully uploaded in S3")
+	return nil
+}
+
+func HandleRequest(ctx context.Context) {
 	start := time.Now()
 
 	err := godotenv.Load()
@@ -159,32 +174,13 @@ func HandleRequest(ctx context.Context) (string, error) {
 
 	// 크롤링 결과 파일로 저장하기
 	fileName := "subway_information.json"
-	lambdaFileName := "/tmp/" + fileName
-	writeFile(lambdaFileName, INFO)
+
 	end := time.Since(start)
 	fmt.Println("총 실행 시간 : ", end)
 
 	// 저장한 json 파일 s3에 업로드
 	bucktBasics := AWSConfigure()
-
-	f, err := os.Open(lambdaFileName)
-	// file close 하는거 예약하기
-	defer f.Close()
-	if err != nil {
-		return "failed to open file", fmt.Errorf("%q, %v", fileName, err)
-	}
-
-	_, err = bucktBasics.S3Client.PutObject(context.TODO(), &s3.PutObjectInput{
-		Bucket: aws.String(os.Getenv("AWS_BUCKET_NAME")),
-		Key:    aws.String(fileName),
-		Body:   f,
-	})
-	if err != nil {
-		return "failed to upload file", fmt.Errorf("%v", err)
-	}
-
-	message := fileName + " file uploaded"
-	return message, nil
+	S3Uploader(INFO, bucktBasics, fileName)
 }
 
 func main() {
